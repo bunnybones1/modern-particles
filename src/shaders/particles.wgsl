@@ -1,16 +1,14 @@
 struct Particle { pos: vec4f, velocity: vec4f, traits: vec4f }
-struct Params { clock: vec4f, flow: vec4f, display: vec4f, drift: vec4f }
+struct Params { clock: vec4f, flow: vec4f, display: vec4f, drift: vec4f, camera: vec4f }
 @group(0) @binding(0) var<storage, read> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> params: Params;
 @group(0) @binding(2) var<storage, read> history: array<vec4f>;
 struct Output { @builtin(position) position: vec4f, @location(0) uv: vec2f, @location(1) color: vec3f, @location(2) brightness: f32, @location(3) isTail: f32 }
 fn project(world: vec3f) -> vec3f {
- let yaw = params.flow.y * 0.065 + sin(params.clock.x * 0.027) * 0.08;
- let pitch = params.flow.z * 0.06;
- let x = world.x * cos(yaw) + world.z * sin(yaw);
- let z = -world.x * sin(yaw) + world.z * cos(yaw);
- let y = world.y * cos(pitch) - z * sin(pitch);
- let depth = max(1.0,26.0 - (world.y * sin(pitch) + z * cos(pitch)));
+ let x = world.x * params.camera.x + world.z * params.camera.y;
+ let z = -world.x * params.camera.y + world.z * params.camera.x;
+ let y = world.y * params.camera.z - z * params.camera.w;
+ let depth = max(1.0,26.0 - (world.y * params.camera.w + z * params.camera.z));
  return vec3f(vec2f(x,y) / (depth * 0.58),depth);
 }
 fn pathPoint(instance: u32, point: u32) -> vec3f {
@@ -28,8 +26,9 @@ fn hueToRgb(hue: f32) -> vec3f {
 }
 @vertex fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> Output {
  let p = particles[instance];
- let corners = array<vec2f,6>(vec2f(-1,-1),vec2f(1,-1),vec2f(-1,1),vec2f(-1,1),vec2f(1,-1),vec2f(1,1));
- let corner = corners[vertex % 6u];
+ let corners = array<vec2f,4>(vec2f(-1,-1),vec2f(1,-1),vec2f(-1,1),vec2f(1,1));
+ var corner = vec2f(0.0,select(-1.0,1.0,vertex % 2u == 1u));
+ if (vertex < 4u) { corner = corners[vertex]; }
  let head = project(p.pos.xyz);
  let depth = head.z;
  var center = head.xy;
@@ -39,9 +38,8 @@ fn hueToRgb(hue: f32) -> vec3f {
  var out: Output;
  out.uv = corner;
  out.isTail = 0.0;
- if (vertex >= 6u) {
-   let segment = (vertex - 6u) / 6u;
-   let point = segment + select(0u,1u,corner.x > 0.0);
+ if (vertex >= 4u) {
+   let point = (vertex - 4u) / 2u;
    let u = f32(point) / 16.0;
    let position = project(pathPoint(instance,point));
    let before = project(pathPoint(instance,select(0u,point-1u,point>0u)));
@@ -60,8 +58,8 @@ fn hueToRgb(hue: f32) -> vec3f {
  if (params.display.z > 0.5 && params.display.z < 1.5) { color = mix(vec3f(1.0,0.19,0.03),vec3f(1.0,0.72,0.22),p.traits.z); }
  if (params.display.z > 1.5) { color = mix(vec3f(0.19,0.4,1.0),vec3f(0.65,0.83,1.0),p.traits.z); }
  out.color = color;
- let pulse = pow(0.5 + 0.5 * sin(params.clock.x * (0.7 + p.traits.w * 1.2) + p.traits.x * 6.28318), 5.0);
- out.brightness = (0.10 + pulse * 1.5) * mix(0.32,1.0,clamp(1.0 - depth / 52.0,0.0,1.0));
+ // Flicker is evaluated once per particle by the compute pass.
+ out.brightness = p.pos.w * mix(0.32,1.0,clamp(1.0 - depth / 52.0,0.0,1.0));
  return out;
 }
 @fragment fn fragment(in: Output) -> @location(0) vec4f {

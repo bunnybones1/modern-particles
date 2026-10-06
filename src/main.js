@@ -3,6 +3,7 @@ import computeCode from './shaders/compute.wgsl?raw';
 import particleCode from './shaders/particles.wgsl?raw';
 
 const COUNT = 40_000;
+const TAIL_SEGMENTS = 16;
 const HISTORY_INTERVAL = 0.125; // 33 samples span four simulation seconds.
 const $ = (id) => document.getElementById(id);
 let paused = false, reseed = false, simulationTime = 0, pointer = [0, 0, 0];
@@ -37,13 +38,23 @@ async function start() {
  const format = navigator.gpu.getPreferredCanvasFormat();
  const particleBuffer = device.createBuffer({ size: COUNT * 48, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
  const historyBuffer = device.createBuffer({ size: COUNT * 33 * 16, usage: GPUBufferUsage.STORAGE });
- const uniformBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+ const uniformData = new Float32Array(20);
+ const uniformBuffer = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
  const modules = [computeCode, particleCode].map(code => device.createShaderModule({ code }));
  for (const module of modules) { const info = await module.getCompilationInfo(); const errors = info.messages.filter(m => m.type === 'error'); if (errors.length) throw new Error(errors.map(m => `${m.lineNum}: ${m.message}`).join('\n')); }
  const compute = await device.createComputePipelineAsync({ layout: 'auto', compute: { module: modules[0], entryPoint: 'main' } });
  const render = await device.createRenderPipelineAsync({ layout: 'auto', vertex: { module: modules[1], entryPoint: 'vertex' }, fragment: { module: modules[1], entryPoint: 'fragment', targets: [{ format, blend: { color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' }, alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' } } }] }, primitive: { topology: 'triangle-list' } });
  const particleGroup = (pipeline) => device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: particleBuffer } }, { binding: 1, resource: { buffer: uniformBuffer } }, { binding: 2, resource: { buffer: historyBuffer } }] });
  const computeGroup = particleGroup(compute), renderGroup = particleGroup(render);
+ // Four head vertices + two shared vertices at each of seventeen ribbon points.
+ const indices = new Uint16Array(6 + TAIL_SEGMENTS * 6);
+ indices.set([0,1,2,2,1,3]);
+ for (let segment = 0; segment < TAIL_SEGMENTS; segment++) {
+  const base = 4 + segment * 2;
+  indices.set([base,base+2,base+1,base+1,base+2,base+3],6 + segment * 6);
+ }
+ const indexBuffer = device.createBuffer({ size: indices.byteLength, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
+ device.queue.writeBuffer(indexBuffer,0,indices);
  let sized = false, historyCursor = 0, historyElapsed = 0;
  function seed() { historyCursor = 0; historyElapsed = 0; const ptr = engine.initialize(COUNT, crypto.getRandomValues(new Uint32Array(1))[0], canvas.width / canvas.height); device.queue.writeBuffer(particleBuffer, 0, new Float32Array(engine.memory.buffer, ptr, COUNT * 12)); }
  function resize() {
@@ -58,7 +69,7 @@ async function start() {
  }
  resize();
  $('status').textContent = '40,000 / MOTION HISTORY';
- window.flowDiagnostics = { count: COUNT, backend: 'WebGPU', engine: 'Rust / WASM', ready: true };
+ window.flowDiagnostics = { count: COUNT, backend: 'WebGPU', engine: 'Rust / WASM', ready: true, verticesPerParticle: 38, indicesPerParticle: indices.length };
  let last = performance.now(), fpsTime = last, frames = 0;
  function frame(now) {
   if (!$('error').hidden) return;
@@ -75,7 +86,12 @@ async function start() {
     historyCursor = (historyCursor + 1) % 33;
     writeHistory = 1;
    }
-   const uniforms = new Float32Array(engine.memory.buffer, ptr, 16);
+   uniformData.set(new Float32Array(engine.memory.buffer,ptr,16));
+   const uniforms = uniformData;
+   const yaw = pointer[0] * 0.065 + Math.sin(simulationTime * 0.027) * 0.08;
+   const pitch = pointer[1] * 0.06;
+   uniforms[16] = Math.cos(yaw); uniforms[17] = Math.sin(yaw);
+   uniforms[18] = Math.cos(pitch); uniforms[19] = Math.sin(pitch);
    uniforms[11] = writeHistory;
    uniforms[14] = historyCursor;
    uniforms[15] = historyElapsed / HISTORY_INTERVAL;
@@ -83,7 +99,7 @@ async function start() {
    const encoder = device.createCommandEncoder();
    const simulation = encoder.beginComputePass(); simulation.setPipeline(compute); simulation.setBindGroup(0, computeGroup); simulation.dispatchWorkgroups(Math.ceil(COUNT / 256)); simulation.end();
    const screen = encoder.beginRenderPass({ colorAttachments: [{ view: context.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0.003,0.008,0.006,1] }] });
-   screen.setPipeline(render); screen.setBindGroup(0, renderGroup); screen.draw(6 + 16 * 6, COUNT); screen.end();
+   screen.setPipeline(render); screen.setBindGroup(0, renderGroup); screen.setIndexBuffer(indexBuffer,'uint16'); screen.drawIndexed(indices.length, COUNT); screen.end();
    device.queue.submit([encoder.finish()]);
   }
   frames++;

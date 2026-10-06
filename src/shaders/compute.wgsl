@@ -1,5 +1,5 @@
 struct Particle { pos: vec4f, velocity: vec4f, traits: vec4f }
-struct Params { clock: vec4f, flow: vec4f, display: vec4f, drift: vec4f }
+struct Params { clock: vec4f, flow: vec4f, display: vec4f, drift: vec4f, camera: vec4f }
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> params: Params;
 @group(0) @binding(2) var<storage, read_write> history: array<vec4f>;
@@ -42,12 +42,10 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
  // Stir around the pointer's ray, using the same camera transform as rendering.
  // The radius scales with depth, keeping the interaction under the visible cursor.
  if (params.flow.w > 0.0) {
-   let yaw = params.flow.y * 0.065 + sin(t * 0.027) * 0.08;
-   let pitch = params.flow.z * 0.06;
-   let cameraX = p.pos.x * cos(yaw) + p.pos.z * sin(yaw);
-   let rotatedZ = -p.pos.x * sin(yaw) + p.pos.z * cos(yaw);
-   let cameraY = p.pos.y * cos(pitch) - rotatedZ * sin(pitch);
-   let cameraZ = p.pos.y * sin(pitch) + rotatedZ * cos(pitch);
+   let cameraX = p.pos.x * params.camera.x + p.pos.z * params.camera.y;
+   let rotatedZ = -p.pos.x * params.camera.y + p.pos.z * params.camera.x;
+   let cameraY = p.pos.y * params.camera.z - rotatedZ * params.camera.w;
+   let cameraZ = p.pos.y * params.camera.w + rotatedZ * params.camera.z;
    let depth = max(1.0,26.0 - cameraZ);
    let delta = vec2f(cameraX,cameraY) - params.flow.yz * depth * 0.58;
    let radius = max(0.75,depth * 0.58 * 0.16);
@@ -57,10 +55,10 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
    let push = local * 0.8;
    let cameraForce = vec3f(swirl + push,0.35 * sin(phase + t)) * influence;
    // Inverse pitch and yaw map the force back into simulation world space.
-   let forceY = cameraForce.y * cos(pitch) + cameraForce.z * sin(pitch);
-   let forceZ = -cameraForce.y * sin(pitch) + cameraForce.z * cos(pitch);
-   v += vec3f(cameraForce.x * cos(yaw) - forceZ * sin(yaw),forceY,
-              cameraForce.x * sin(yaw) + forceZ * cos(yaw));
+   let forceY = cameraForce.y * params.camera.z + cameraForce.z * params.camera.w;
+   let forceZ = -cameraForce.y * params.camera.w + cameraForce.z * params.camera.z;
+   v += vec3f(cameraForce.x * params.camera.x - forceZ * params.camera.y,forceY,
+              cameraForce.x * params.camera.y + forceZ * params.camera.x);
  }
  // Steer gently inward near the front/back faces instead of teleporting in depth.
  let depthTurn = smoothstep(16.0,18.0,abs(p.pos.z));
@@ -86,5 +84,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
    history[base + u32(params.drift.z)] = p.pos;
  }
  p.traits.z = hueField(p.pos.xyz);
+ let pulse = pow(0.5 + 0.5 * sin(t * (0.7 + p.traits.w * 1.2) + p.traits.x * 6.28318),5.0);
+ p.pos.w = 0.10 + pulse * 1.5;
  particles[id.x] = p;
 }
