@@ -17,10 +17,14 @@ fn pathPoint(instance: u32, point: u32) -> vec3f {
  if (point == 0u) { return particles[instance].pos.xyz; }
  let cursor = u32(params.drift.z);
  let base = instance * 33u;
- // Each segment spans one second; interpolate samples as the clock advances.
+ // Each segment spans half a second; interpolate samples as the clock advances.
  let older = (cursor + 33u - point * 2u) % 33u;
  let newer = (older + 1u) % 33u;
  return mix(history[base + older].xyz,history[base + newer].xyz,params.drift.w);
+}
+fn hueToRgb(hue: f32) -> vec3f {
+ let rgb = clamp(abs(fract(vec3f(hue) + vec3f(0.0,2.0/3.0,1.0/3.0)) * 6.0 - 3.0) - 1.0,vec3f(0.0),vec3f(1.0));
+ return mix(vec3f(1.0),rgb,0.7);
 }
 @vertex fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32) -> Output {
  let p = particles[instance];
@@ -52,7 +56,7 @@ fn pathPoint(instance: u32, point: u32) -> vec3f {
    out.isTail = 1.0;
  }
  out.position = vec4f((center + offset) * vec2f(1.0 / params.clock.z,1.0),0.5,1.0);
- var color = mix(vec3f(0.42,0.75,0.12),vec3f(1.0,0.8,0.27),p.traits.z);
+ var color = hueToRgb(p.traits.z);
  if (params.display.z > 0.5 && params.display.z < 1.5) { color = mix(vec3f(1.0,0.19,0.03),vec3f(1.0,0.72,0.22),p.traits.z); }
  if (params.display.z > 1.5) { color = mix(vec3f(0.19,0.4,1.0),vec3f(0.65,0.83,1.0),p.traits.z); }
  out.color = color;
@@ -75,6 +79,6 @@ fn pathPoint(instance: u32, point: u32) -> vec3f {
  let halo = exp(-r * r * 6.0) * (1.0 - smoothstep(0.75,1.0,r));
  if (halo + core < 0.001) { discard; }
  let color = (in.color * halo * 0.45
-              + mix(in.color,vec3f(1.0,1.0,0.8),0.6) * core) * in.brightness;
+              + mix(in.color,vec3f(1.0),0.6) * core) * in.brightness;
  return vec4f(color,1.0);
 }

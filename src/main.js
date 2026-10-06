@@ -3,6 +3,7 @@ import computeCode from './shaders/compute.wgsl?raw';
 import particleCode from './shaders/particles.wgsl?raw';
 
 const COUNT = 40_000;
+const HISTORY_INTERVAL = 0.25; // 33 samples span eight simulation seconds.
 const $ = (id) => document.getElementById(id);
 let paused = false, reseed = false, simulationTime = 0, pointer = [0, 0, 0];
 $('pause').onclick = () => { paused = !paused; $('pause').innerHTML = paused ? 'Resume <span>▷</span>' : 'Pause <span>Ⅱ</span>'; $('pause').setAttribute('aria-label', paused ? 'Resume simulation' : 'Pause simulation'); };
@@ -17,6 +18,7 @@ window.addEventListener('keydown', (event) => {
  if (event.key.toLowerCase() === 'h') document.body.classList.toggle('ui-hidden');
 });
 window.addEventListener('pointermove', (event) => { pointer = [(event.clientX / innerWidth * 2 - 1) * innerWidth / innerHeight, 1 - event.clientY / innerHeight * 2, event.target === $('canvas') ? 1 : 0]; });
+window.addEventListener('pointerup', (event) => { if (event.pointerType === 'touch') pointer[2] = 0; });
 document.addEventListener('pointerleave', () => { pointer[2] = 0; });
 window.addEventListener('blur', () => { pointer[2] = 0; });
 function fail(message) { $('error-message').textContent = message; $('error').hidden = false; $('status').textContent = 'GPU UNAVAILABLE'; }
@@ -68,15 +70,15 @@ async function start() {
    const ptr = engine.update(simulationTime, dt, canvas.width / canvas.height, Number($('speed').value), Number($('turbulence').value), ...pointer, canvas.width, canvas.height, Number($('palette').value));
    historyElapsed += dt * Number($('speed').value);
    let writeHistory = 0;
-   if (historyElapsed >= 0.5) {
-    historyElapsed -= 0.5;
+   if (historyElapsed >= HISTORY_INTERVAL) {
+    historyElapsed -= HISTORY_INTERVAL;
     historyCursor = (historyCursor + 1) % 33;
     writeHistory = 1;
    }
    const uniforms = new Float32Array(engine.memory.buffer, ptr, 16);
    uniforms[11] = writeHistory;
    uniforms[14] = historyCursor;
-   uniforms[15] = historyElapsed / 0.5;
+   uniforms[15] = historyElapsed / HISTORY_INTERVAL;
    device.queue.writeBuffer(uniformBuffer, 0, uniforms);
    const encoder = device.createCommandEncoder();
    const simulation = encoder.beginComputePass(); simulation.setPipeline(compute); simulation.setBindGroup(0, computeGroup); simulation.dispatchWorkgroups(Math.ceil(COUNT / 256)); simulation.end();

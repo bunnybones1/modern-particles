@@ -3,6 +3,29 @@ struct Params { clock: vec4f, flow: vec4f, display: vec4f, drift: vec4f }
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> params: Params;
 @group(0) @binding(2) var<storage, read_write> history: array<vec4f>;
+// Integer hashing makes each lattice hue repeatable, with no per-frame randomness.
+fn latticeHue(cell: vec3i) -> f32 {
+ let q = bitcast<vec3u>(cell);
+ var h = (q.x * 1597334677u) ^ (q.y * 3812015801u) ^ (q.z * 2798796415u);
+ h = (h ^ (h >> 16u)) * 2246822519u;
+ h = (h ^ (h >> 13u)) * 3266489917u;
+ h = h ^ (h >> 16u);
+ return f32(h & 16777215u) / 16777216.0;
+}
+fn hueField(position: vec3f) -> f32 {
+ // A cell spans 12.5 world units: broad, slowly changing regions of color.
+ let q = position * 0.08;
+ let cell = vec3i(floor(q));
+ let f = fract(q);
+ let blend = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+ let bottom = mix(
+   mix(latticeHue(cell),latticeHue(cell + vec3i(1,0,0)),blend.x),
+   mix(latticeHue(cell + vec3i(0,1,0)),latticeHue(cell + vec3i(1,1,0)),blend.x),blend.y);
+ let top = mix(
+   mix(latticeHue(cell + vec3i(0,0,1)),latticeHue(cell + vec3i(1,0,1)),blend.x),
+   mix(latticeHue(cell + vec3i(0,1,1)),latticeHue(cell + vec3i(1,1,1)),blend.x),blend.y);
+ return mix(bottom,top,blend.z);
+}
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) id: vec3u) {
  if (id.x >= 40000u) { return; }
@@ -15,7 +38,30 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
                   sin(q.z + t * 0.13) + cos(q.x * 1.1 + t * 0.09),
                   sin(q.x + t * 0.12) - cos(q.y * 1.2 - t * 0.15));
  let flutter = vec3f(sin(t * 1.2 + phase),cos(t * 0.8 + phase * 2.0),sin(t * 0.9 + phase * 3.0));
- let v = field * (0.17 + params.flow.x * 0.22) + flutter * 0.12;
+ var v = field * (0.17 + params.flow.x * 0.22) + flutter * 0.12;
+ // Stir around the pointer's ray, using the same camera transform as rendering.
+ // The radius scales with depth, keeping the interaction under the visible cursor.
+ if (params.flow.w > 0.0) {
+   let yaw = params.flow.y * 0.065 + sin(t * 0.027) * 0.08;
+   let pitch = params.flow.z * 0.06;
+   let cameraX = p.pos.x * cos(yaw) + p.pos.z * sin(yaw);
+   let rotatedZ = -p.pos.x * sin(yaw) + p.pos.z * cos(yaw);
+   let cameraY = p.pos.y * cos(pitch) - rotatedZ * sin(pitch);
+   let cameraZ = p.pos.y * sin(pitch) + rotatedZ * cos(pitch);
+   let depth = max(1.0,26.0 - cameraZ);
+   let delta = vec2f(cameraX,cameraY) - params.flow.yz * depth * 0.58;
+   let radius = max(0.75,depth * 0.58 * 0.16);
+   let local = delta / radius;
+   let influence = exp(-dot(local,local) * 1.5) * params.flow.w;
+   let swirl = vec2f(-local.y,local.x) * 5.0;
+   let push = local * 0.8;
+   let cameraForce = vec3f(swirl + push,0.35 * sin(phase + t)) * influence;
+   // Inverse pitch and yaw map the force back into simulation world space.
+   let forceY = cameraForce.y * cos(pitch) + cameraForce.z * sin(pitch);
+   let forceZ = -cameraForce.y * sin(pitch) + cameraForce.z * cos(pitch);
+   v += vec3f(cameraForce.x * cos(yaw) - forceZ * sin(yaw),forceY,
+              cameraForce.x * sin(yaw) + forceZ * cos(yaw));
+ }
  let initializeHistory = p.velocity.w < 0.5;
  p.velocity = vec4f(mix(p.velocity.xyz, v, min(1.0, dt * 1.8)),1.0);
  p.pos = vec4f(p.pos.xyz + p.velocity.xyz * dt,1.0);
@@ -30,5 +76,6 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
  } else if (params.display.w > 0.5) {
    history[base + u32(params.drift.z)] = p.pos;
  }
+ p.traits.z = hueField(p.pos.xyz);
  particles[id.x] = p;
 }
