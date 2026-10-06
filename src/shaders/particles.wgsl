@@ -17,7 +17,7 @@ fn pathPoint(instance: u32, point: u32) -> vec3f {
  if (point == 0u) { return particles[instance].pos.xyz; }
  let cursor = u32(params.drift.z);
  let base = instance * 33u;
- // Each segment spans half a second; interpolate samples as the clock advances.
+ // Each segment spans a quarter of a second; interpolate samples as the clock advances.
  let older = (cursor + 33u - point * 2u) % 33u;
  let newer = (older + 1u) % 33u;
  return mix(history[base + older].xyz,history[base + newer].xyz,params.drift.w);

@@ -3,7 +3,7 @@ import computeCode from './shaders/compute.wgsl?raw';
 import particleCode from './shaders/particles.wgsl?raw';
 
 const COUNT = 40_000;
-const HISTORY_INTERVAL = 0.25; // 33 samples span eight simulation seconds.
+const HISTORY_INTERVAL = 0.125; // 33 samples span four simulation seconds.
 const $ = (id) => document.getElementById(id);
 let paused = false, reseed = false, simulationTime = 0, pointer = [0, 0, 0];
 $('pause').onclick = () => { paused = !paused; $('pause').innerHTML = paused ? 'Resume <span>▷</span>' : 'Pause <span>Ⅱ</span>'; $('pause').setAttribute('aria-label', paused ? 'Resume simulation' : 'Pause simulation'); };
