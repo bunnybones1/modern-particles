@@ -62,12 +62,21 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
    v += vec3f(cameraForce.x * cos(yaw) - forceZ * sin(yaw),forceY,
               cameraForce.x * sin(yaw) + forceZ * cos(yaw));
  }
+ // Steer gently inward near the front/back faces instead of teleporting in depth.
+ let depthTurn = smoothstep(16.0,18.0,abs(p.pos.z));
+ v.z = mix(v.z,-sign(p.pos.z) * max(abs(v.z),0.25),depthTurn);
  let initializeHistory = p.velocity.w < 0.5;
  p.velocity = vec4f(mix(p.velocity.xyz, v, min(1.0, dt * 1.8)),1.0);
  p.pos = vec4f(p.pos.xyz + p.velocity.xyz * dt,1.0);
  let bounds = vec3f(18.0,11.0,18.0);
- let wrapped = any(abs(p.pos.xyz) > bounds);
- p.pos = vec4f((fract((p.pos.xyz + bounds) / (bounds * 2.0))) * bounds * 2.0 - bounds,1.0);
+ let wrapped = any(abs(p.pos.xy) > bounds.xy);
+ let wrappedXY = fract((p.pos.xy + bounds.xy) / (bounds.xy * 2.0)) * bounds.xy * 2.0 - bounds.xy;
+ p.pos = vec4f(wrappedXY,p.pos.z,1.0);
+ // Reflect any residual overshoot, preserving the depth trajectory and its history.
+ if (abs(p.pos.z) > bounds.z) {
+   p.pos.z = sign(p.pos.z) * (2.0 * bounds.z - abs(p.pos.z));
+   p.velocity.z = -p.velocity.z;
+ }
  // Keep actual world-space positions in a per-particle ring buffer.
  // Clear history on initialization and wrapping to avoid a trail across the volume.
  let base = id.x * 33u;
